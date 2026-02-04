@@ -1,0 +1,1614 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Superformula Lab</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Archivo+Black&family=Nunito+Sans:ital,opsz,wght@0,6..12,200..1000;1,6..12,200..1000&display=swap"
+        rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0c0c0c;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            background-color: #0c0c0c;
+        }
+
+        canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+        }
+
+        .lil-gui {
+            --width: 380px;
+            --name-width: 35%;
+            --widget-height: 28px;
+            --spacing: 6px;
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+        }
+
+        /* Main UI (Top-Left) */
+        .gui-main {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1000;
+        }
+
+        /* Export UI (Top-Right) */
+        .gui-export {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            /* Reset bottom/left */
+            bottom: auto;
+            left: auto;
+            left: auto;
+            z-index: 1000;
+        }
+
+        .fps-counter {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: #ffffff;
+            font-family: 'Inter', monospace;
+            font-size: 11px;
+            pointer-events: none;
+        }
+
+        /* Override default positioning for our custom containers */
+        .lil-gui.root {
+            position: relative;
+            max-height: 80vh;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #444 #111;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Webkit Scrollbar */
+        .lil-gui.root::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .lil-gui.root::-webkit-scrollbar-track {
+            background: #111;
+        }
+
+        .lil-gui.root::-webkit-scrollbar-thumb {
+            background-color: #444;
+            border-radius: 4px;
+        }
+
+        .lil-gui .title {
+            background: #222;
+            font-size: 16px;
+            /* Base size */
+            line-height: 1.4;
+            padding: 8px 6px;
+            height: auto;
+            /* Allow growth */
+        }
+
+        .lil-gui .controller.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+            filter: grayscale(100%);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="canvas-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+        import GUI from 'https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.min.js';
+
+        // Global State for Exporting
+        window.isExporting = false;
+
+        // ERROR HANDLER
+        window.onerror = function (msg, url, line, col, error) {
+            const div = document.createElement('div');
+            div.style.position = 'fixed';
+            div.style.top = '10px';
+            div.style.left = '10px';
+            div.style.color = 'red';
+            div.style.background = 'rgba(0,0,0,0.8)';
+            div.style.padding = '20px';
+            div.style.zIndex = '99999';
+            div.innerText = `ERROR: ${msg}\nLine: ${line}:${col}`;
+            document.body.appendChild(div);
+            return false;
+        };
+        window.isExporting = false;
+
+        // --- SHADER DEFINITIONS ---
+
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position, 1.0);
+            }
+        `;
+
+        const fragmentShader = `
+            uniform float uTime;
+            uniform vec2 uResolution;
+            varying vec2 vUv;
+            
+            // Superformula Parameters
+            uniform float uM;
+            uniform float uN1;
+            uniform float uN2;
+            uniform float uN3;
+            uniform float uA;
+            uniform float uB;
+            uniform float uScale;
+            uniform float uThickness;
+            uniform float uGlow;
+            uniform vec3 uColor;
+            uniform vec3 uBackgroundColor;
+
+            // New Geometry Params
+            uniform float uRotationSpeed;
+            uniform float uTwist;
+            uniform float uWaves;
+            uniform float uDistortion;
+            uniform float uDistortionScale;
+            uniform float uFold;
+
+            // Array / Feedback Params
+            uniform float uArrayCount; // 0 to 20
+            uniform vec2 uArrayStep;   // Shift
+            uniform float uArrayRotation; // Rotate
+            uniform float uArrayScale;    // Scale feedback
+            // Removed uArrayCenter as requested
+            
+            // Post FX Params
+            uniform float uContrast;
+            uniform float uBloom;
+            uniform float uNoise;
+            
+            
+            #define PI 3.14159265359
+
+            // Pseudo-random for noise
+            float random(vec2 st) {
+                return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+            }
+
+            // Centralized Distance Function for the Shape
+            float getShapeDist(vec2 p) {
+                // Cartesian to Polar
+                float r_pixel = length(p);
+                float phi = atan(p.y, p.x);
+
+                // 1. Rotation
+                phi += uTime * uRotationSpeed;
+                
+                // 2. Waves (Sinusoidal distortion on radius)
+                // We want Waves to be visible even if Distortion is 0? 
+                // Usually distortion *is* the wave amplitude. 
+                // User said "wave displace is visible just when distortion is applied".
+                // This implies they want Waves to have their own presence or scale differently.
+                // Let's create a cleaner relation:
+                // uWaves = Frequency (Density of ripples)
+                // uDistortion = Amplitude (Height of ripples)
+                // If uDistortion is too big, we scale it down.
+                
+                float waveFreq = 10.0 + uWaves * 50.0; // Map 0-1 to 10-60
+                float waveAmp = uDistortion * uDistortionScale;
+                
+                r_pixel += sin(phi * waveFreq + uTime) * waveAmp;
+                
+                // 3. Twist (Spirals)
+                phi += r_pixel * uTwist;
+                
+                // 4. Folding (Kaleidoscope)
+                if (uFold > 1.0) {
+                    float foldAngle = PI / floor(uFold);
+                    phi = mod(phi, 2.0 * foldAngle) - foldAngle;
+                }
+
+                // Superformula Equation
+                float t1 = abs(cos(uM * phi / 4.0) / uA);
+                t1 = max(t1, 0.00001); // Safety
+                t1 = pow(t1, uN2);
+
+                float t2 = abs(sin(uM * phi / 4.0) / uB);
+                t2 = max(t2, 0.00001); // Safety
+                t2 = pow(t2, uN3);
+
+                float r_shape = pow(max(t1 + t2, 0.00001), -1.0 / uN1);
+
+                return abs(r_pixel - r_shape);
+            }
+
+            void main() {
+                // Normalized pixel coordinates (from 0 to 1)
+                vec2 uv = vUv;
+                
+                // Center UV (-1 to 1) and fix aspect ratio
+                vec2 p = (uv - 0.5) * 2.0;
+                p.x *= uResolution.x / uResolution.y;
+
+                // Adjust for Global Scale
+                p /= uScale;
+
+                // --- ARRAY LOOP ---
+                // We calculate min distance across all instances
+                
+                float finalD = 100.0; // Init with large distance
+                
+                // Loop 0 .. uArrayCount (Safe max 20)
+                vec2 p_iter = p;
+                
+                float limit = max(1.0, uArrayCount); 
+                
+                // Initial Transform state
+                float currentScale = 1.0;
+                float currentRot = 0.0;
+                vec2 currentShift = vec2(0.0);
+
+                for(float i = 0.0; i < 21.0; i++) {
+                    if (i >= limit) break;
+
+                    // Apply current transforms to the point
+                    vec2 pos = p_iter - currentShift;
+                    
+                    // Rotate
+                    float c = cos(-currentRot);
+                    float s = sin(-currentRot);
+                    pos = vec2(pos.x * c - pos.y * s, pos.x * s + pos.y * c);
+                    
+                    // Scale
+                    pos /= currentScale;
+
+                    // Get Dist (Now Unsigned / Outline)
+                    float d = getShapeDist(pos);
+                    
+                    // Correct distance for scaling to keep linewidth consistent-ish
+                    d *= currentScale;
+
+                    finalD = min(finalD, d);
+
+                    // Update transforms for next instance
+                    currentShift += uArrayStep;
+                    currentRot += uArrayRotation;
+                    currentScale *= uArrayScale;
+                }
+
+                // --- RENDER MODEL (Solid Core + Glow) ---
+                // Use finalD
+                float d = finalD;
+
+                // 1. Solid Core (Anti-Aliased)
+                // Use analytic pixel size instead of fwidth for better compatibility
+                float pixelSize = 2.0 / (min(uResolution.x, uResolution.y) * uScale);
+                float w = pixelSize * 1.5; // Slight softening
+                
+                // Smoothstep usage to create a solid line of width 'uThickness'
+                float coreAlpha = 1.0 - smoothstep(uThickness - w, uThickness + w, d);
+                
+                // 2. Glow (Additive)
+                float glow = uGlow * 0.2 / (max(0.0001, d - uThickness) + 0.01);
+                
+                // 3. Bloom (Wide Atmosphere)
+                float bloom = uBloom * 0.5 / (d + 0.5);
+                
+                // Compose Shape Color
+                vec3 shapeColor = uColor * (coreAlpha + glow + bloom);
+                
+                vec3 finalColor = uBackgroundColor + shapeColor;
+
+                
+                // Noise / Grain
+                float grain = random(vUv * uTime * 2.0);
+                finalColor += (grain - 0.5) * uNoise;
+
+                // Tone Mapping/Clamping (Simple Reinhard)
+                finalColor = finalColor / (finalColor + 1.0); 
+                
+                // Contrast
+                finalColor = (finalColor - 0.5) * uContrast + 0.5;
+                
+                // Clamp final output
+                finalColor = clamp(finalColor, 0.0, 1.0);
+
+                gl_FragColor = vec4(finalColor, 1.0);
+            }
+        `;
+
+        // Particles Shaders (Unchanged)
+
+
+        // --- CLASSES ---
+
+        // Simple FPS Counter
+        const fpsEl = document.createElement('div');
+        fpsEl.className = 'fps-counter';
+        document.body.appendChild(fpsEl);
+        let lastTime = performance.now();
+        let frames = 0;
+        function updateFPS() {
+            const now = performance.now();
+            frames++;
+            if (now - lastTime >= 1000) {
+                fpsEl.innerText = frames + ' FPS';
+                frames = 0;
+                lastTime = now;
+            }
+        }
+
+        class Recorder {
+            constructor(canvas, renderer, uniforms, camera, mesh, textOverlay) {
+                this.canvas = canvas;
+                this.renderer = renderer;
+                this.uniforms = uniforms;
+                this.camera = camera;
+                this.mesh = mesh;
+                this.textOverlay = textOverlay;
+                this.mediaRecorder = null;
+                this.chunks = [];
+                this.isRecording = false;
+
+                this.settings = {
+                    format: '1080x1080',
+                    bitrate: 50000000, // Default 50 Mbps
+                    exportDuration: 2.0,
+                    exportFPS: 60
+                };
+
+                this.ratios = {
+                    'Window': { w: 0, h: 0 },
+                    '1:1 (Square 1080p)': { w: 1080, h: 1080 },
+                    '9:16 (Story 1080p)': { w: 1080, h: 1920 },
+                    '4:5 (Post 1080p)': { w: 1080, h: 1350 },
+                    '16:9 (Landscape 1080p)': { w: 1920, h: 1080 },
+                    '4K (Landscape)': { w: 3840, h: 2160 }
+                };
+            }
+
+            resizeForExport() {
+                let w, h;
+                const setting = this.ratios[this.settings.format];
+                if (!setting || (setting.w === 0)) {
+                    w = window.innerWidth;
+                    h = window.innerHeight;
+                } else {
+                    w = setting.w;
+                    h = setting.h;
+                }
+
+                const asp = w / h;
+                this.renderer.setSize(w, h);
+                this.uniforms.uResolution.value.set(w, h);
+
+                // Fix Stretching
+                if (this.camera) {
+                    this.camera.left = -asp;
+                    this.camera.right = asp;
+                    this.camera.updateProjectionMatrix();
+                }
+                if (this.mesh) {
+                    this.mesh.scale.set(asp, 1, 1);
+                }
+                if (this.textOverlay) {
+                    this.textOverlay.resize(w, h);
+                }
+            }
+
+            takeSnapshot() {
+                this.resizeForExport();
+                this.renderer.render(scene, camera);
+                const link = document.createElement('a');
+                link.download = `superformula_snap_${Date.now()}.png`;
+                link.href = this.canvas.toDataURL('image/png', 1.0);
+                link.click();
+            }
+
+            toggleRecord(onStatusChange) {
+                if (this.isRecording) { this.stop(); } else { this.start(); }
+                if (onStatusChange) onStatusChange(this.isRecording);
+            }
+
+            start() {
+                this.resizeForExport();
+                const fps = Number(this.settings.exportFPS) || 30; // Default to 30 if undefined
+                const stream = this.canvas.captureStream(fps);
+                let mimeType = 'video/webm;codecs=vp9';
+                if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+                this.mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType, videoBitsPerSecond: this.settings.bitrate });
+                this.chunks = [];
+                this.mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.chunks.push(e.data); };
+                this.mediaRecorder.onstop = () => this.saveVideo();
+                this.mediaRecorder.start();
+                this.isRecording = true;
+                console.log(`Recording started at ${fps} FPS...`);
+            }
+
+            stop() {
+                if (this.mediaRecorder && this.isRecording) {
+                    this.mediaRecorder.stop();
+                    this.isRecording = false;
+                    console.log("Recording stopped.");
+                }
+            }
+
+            saveVideo() {
+                const blob = new Blob(this.chunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `superformula_rec_${Date.now()}.webm`;
+                link.click();
+                URL.revokeObjectURL(url);
+            }
+
+            async exportSequence(scene, camera, uniforms, lfoManager) {
+                if (window.isExporting) return;
+                window.isExporting = true;
+
+                const duration = this.settings.exportDuration;
+                const fps = this.settings.exportFPS;
+                const totalFrames = Math.floor(duration * fps);
+                const zip = new JSZip();
+                const folder = zip.folder("sequence");
+
+                console.log(`Starting export: ${totalFrames} frames...`);
+
+                // Overlay for feedback
+                const feedback = document.createElement('div');
+                feedback.style.position = 'absolute';
+                feedback.style.top = '50%';
+                feedback.style.left = '50%';
+                feedback.style.transform = 'translate(-50%, -50%)';
+                feedback.style.background = 'rgba(0,0,0,0.8)';
+                feedback.style.color = '#fff';
+                feedback.style.padding = '20px';
+                feedback.style.fontFamily = 'sans-serif';
+                feedback.style.borderRadius = '8px';
+                feedback.style.zIndex = '9999';
+                feedback.innerHTML = 'Pre-calculating...';
+                document.body.appendChild(feedback);
+
+                this.resizeForExport();
+
+                try {
+                    for (let i = 0; i < totalFrames; i++) {
+                        const t = i / fps;
+
+                        // Update Scene Manually
+                        uniforms.uTime.value = t;
+                        lfoManager.update(t);
+
+                        this.renderer.render(scene, camera);
+
+                        // Capture Frame
+                        // toBlob is better for memory but async
+                        await new Promise(resolve => {
+                            this.canvas.toBlob(blob => {
+                                const filename = `frame_${i.toString().padStart(3, '0')}.jpg`;
+                                folder.file(filename, blob);
+                                feedback.innerHTML = `Rendering Frame ${i + 1} / ${totalFrames}`;
+                                resolve();
+                            }, 'image/jpeg', 0.95);
+                        });
+
+                        // Small delay to let UI breathe
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+
+                    feedback.innerHTML = "Zipping files...";
+                    const content = await zip.generateAsync({ type: "blob" });
+
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(content);
+                    link.download = `sequence_${Date.now()}.zip`;
+                    link.click();
+
+                } catch (e) {
+                    console.error("Export failed:", e);
+                    alert("Export failed check console");
+                } finally {
+                    document.body.removeChild(feedback);
+                    window.isExporting = false;
+                    // Reset to window size or keep? Let's reset if format was Window
+                    if (this.settings.format === 'Window') {
+                        const w = window.innerWidth;
+                        const h = window.innerHeight;
+                        this.renderer.setSize(w, h);
+                        this.uniforms.uResolution.value.set(w, h);
+                    }
+                }
+            }
+        }
+
+        class LFO {
+            constructor(name, manager) {
+                this.name = name;
+                this.manager = manager;
+                this.enabled = true;
+                this.target = 'Select Target...';
+                this.waveform = 'Sine';
+                this.frequency = 0.5;
+                this.min = 0.0;
+                this.max = 1.0;
+
+                this.visCanvas = document.createElement('canvas');
+                this.visCanvas.width = 300;
+                this.visCanvas.height = 40;
+                this.visCanvas.style.marginBottom = '5px';
+                this.visCanvas.style.borderRadius = '3px';
+                this.visCanvas.style.background = '#222';
+                this.visCtx = this.visCanvas.getContext('2d');
+                this.folder = null;
+                this.history = new Array(300).fill(0.5);
+            }
+
+            update(time) {
+                let val = 0; // -1 to 1
+                let t = time * this.frequency;
+                switch (this.waveform) {
+                    case 'Sine': val = Math.sin(t); break;
+                    case 'Square': val = Math.sign(Math.sin(t)); break;
+                    case 'Triangle': val = Math.asin(Math.sin(t)) * (2.0 / Math.PI); break;
+                    case 'Sawtooth': val = 2.0 * (t / (2.0 * Math.PI) - Math.floor(t / (2.0 * Math.PI) + 0.5)); break;
+                    case 'Noise': val = (Math.random() * 2 - 1); break;
+                }
+
+                // Map [-1, 1] to [min, max]
+                // val = -1 -> min
+                // val = 1 -> max
+                const norm = (val + 1.0) * 0.5; // 0 to 1
+                const output = this.min + norm * (this.max - this.min);
+
+                if (this.enabled && this.target !== 'Select Target...') {
+                    if (this.manager.targets[this.target]) {
+                        this.manager.targets[this.target].value = output;
+                    }
+                    this.manager.disableController(this.target, true);
+                }
+                return output;
+            }
+
+            drawVis(currentValue) {
+                this.history.shift();
+                this.history.push(currentValue);
+                const ctx = this.visCtx;
+                const w = this.visCanvas.width;
+                const h = this.visCanvas.height;
+                ctx.clearRect(0, 0, w, h);
+                ctx.strokeStyle = this.enabled ? '#00e5ff' : '#444';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+
+                // Visual range needs to show the min/max or adjust
+                // We'll map the history Min/Max to fit the canvas height
+                let min = Math.min(...this.history);
+                let max = Math.max(...this.history);
+
+                // If the user set Min/Max, we ideally want to see those bounds?
+                // Or just show the signal relative to itself?
+                // Let's stick to auto-ranging for the graph so it always looks full.
+
+                let range = max - min;
+                if (range < 0.001) range = 1;
+
+                for (let i = 0; i < w; i += 2) {
+                    const val = this.history[i];
+                    const y = h - ((val - min) / range) * h;
+                    if (i === 0) ctx.moveTo(i, y); else ctx.lineTo(i, y);
+                }
+                ctx.stroke();
+            }
+        }
+
+        class PresetManager {
+            constructor(gui, uniforms, textOverlay, audioReactor) {
+                this.gui = gui;
+                this.uniforms = uniforms;
+                this.textOverlay = textOverlay;
+                this.audioReactor = audioReactor;
+
+                this.setupGUI();
+            }
+
+            setupGUI() {
+                // Add Folder at the Top (using simple prepend logic if lucky, or just append)
+                // standard GUI appends. 
+                const folder = this.gui.addFolder('Presets Manager');
+
+                const ops = {
+                    save: () => this.savePreset(),
+                    load: () => this.triggerLoad()
+                };
+
+                folder.add(ops, 'save').name('Save Preset (JSON)');
+                folder.add(ops, 'load').name('Load Preset (JSON)');
+
+                // File Input
+                this.fileInput = document.createElement('input');
+                this.fileInput.type = 'file';
+                this.fileInput.accept = '.json';
+                this.fileInput.style.display = 'none';
+                this.fileInput.onchange = (e) => this.loadPreset(e.target.files[0]);
+                document.body.appendChild(this.fileInput);
+            }
+
+            triggerLoad() {
+                this.fileInput.click();
+            }
+
+            savePreset() {
+                const data = {
+                    metadata: {
+                        timestamp: new Date().toISOString(),
+                        version: '1.0'
+                    },
+                    uniforms: {},
+                    textOverlay: this.textOverlay.params,
+                    audioReactor: this.audioReactor ? this.audioReactor.params : null
+                };
+
+                // Extract Uniforms
+                for (const [key, u] of Object.entries(this.uniforms)) {
+                    if (u.value instanceof THREE.Color) {
+                        data.uniforms[key] = { type: 'c', r: u.value.r, g: u.value.g, b: u.value.b };
+                    } else if (u.value instanceof THREE.Vector2) {
+                        data.uniforms[key] = { type: 'v2', x: u.value.x, y: u.value.y };
+                    } else {
+                        data.uniforms[key] = u.value;
+                    }
+                }
+
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `preset_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            loadPreset(file) {
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        this.applyPreset(data);
+                    } catch (err) {
+                        alert('Error loading preset: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            applyPreset(data) {
+                // 1. Uniforms
+                for (const [key, val] of Object.entries(data.uniforms)) {
+                    if (this.uniforms[key]) {
+                        if (val.type === 'c') { // Color
+                            this.uniforms[key].value.setRGB(val.r, val.g, val.b);
+                        } else if (val.type === 'v2') { // Vector2
+                            this.uniforms[key].value.set(val.x, val.y);
+                        } else { // Number
+                            this.uniforms[key].value = val;
+                        }
+                    }
+                }
+
+                // 2. Text Overlay
+                if (data.textOverlay) {
+                    Object.assign(this.textOverlay.params, data.textOverlay);
+                    if (data.textOverlay.fontSizeVal) this.textOverlay.params.fontSizeVal = data.textOverlay.fontSizeVal;
+                    // Force update
+                    this.textOverlay.update();
+                }
+
+                // 3. Audio Reactor
+                if (data.audioReactor && this.audioReactor) {
+                    Object.assign(this.audioReactor.params, data.audioReactor);
+                    // Update base values
+                    this.audioReactor.baseValues = {
+                        uScale: this.uniforms.uScale.value,
+                        uGlow: this.uniforms.uGlow.value
+                    };
+                }
+
+                // Refresh GUI
+                this.gui.controllersRecursive().forEach(c => c.updateDisplay());
+            }
+        }
+        class WebGLTextOverlay {
+            constructor(gui, scene, camera, renderer) {
+                this.scene = scene;
+                this.camera = camera;
+
+                // 1. FIXED Canvas Size (Power of Two)
+                const SIZE = 4096;
+                this.canvas = document.createElement('canvas');
+                this.canvas.width = SIZE;
+                this.canvas.height = SIZE;
+                this.ctx = this.canvas.getContext('2d');
+
+                // Track Aspect Ratio
+                this.currentAspect = window.innerWidth / window.innerHeight;
+
+                // 2. Texture
+                this.texture = new THREE.CanvasTexture(this.canvas);
+                this.texture.minFilter = THREE.LinearFilter;
+                this.texture.magFilter = THREE.LinearFilter;
+                this.texture.generateMipmaps = false;
+                this.texture.wrapS = THREE.ClampToEdgeWrapping;
+                this.texture.wrapT = THREE.ClampToEdgeWrapping;
+
+                // 3. Mesh ( Standard 2x2 Plane )
+                // Maps UV 0..1 to -1..1 coordinates
+                this.geometry = new THREE.PlaneGeometry(2, 2);
+                this.material = new THREE.MeshBasicMaterial({
+                    map: this.texture,
+                    transparent: true,
+                    opacity: 1.0,
+                    side: THREE.DoubleSide,
+                    depthWrite: false,
+                    depthTest: false,
+                    blending: THREE.NormalBlending
+                });
+
+                this.mesh = new THREE.Mesh(this.geometry, this.material);
+                this.mesh.position.set(0, 0, 0.1);
+                this.mesh.renderOrder = 999;
+
+                // Initial Scale
+                if (this.mesh) {
+                    this.mesh.scale.set(this.currentAspect, 1, 1);
+                }
+
+                scene.add(this.mesh);
+
+                this.params = {
+                    text: 'TYPE\nSOMETHING',
+                    fontSize: 250,
+                    fontWeight: 900,
+                    fontWidth: 1.0,
+                    lineHeight: 1.0,
+                    fillColor: '#ffffff',
+                    fillOpacity: 1.0,
+                    glowColor: '#00ffff',
+                    glowRadius: 0.0,
+                    blurRadius: 0.0,
+                    visible: false
+                };
+
+                document.fonts.ready.then(() => this.update());
+            }
+
+            resize(width, height) {
+                this.currentAspect = width / height;
+                if (this.mesh) this.mesh.scale.set(this.currentAspect, 1, 1);
+                this.update();
+            }
+
+            setupGUI(folder) {
+                const textCtrl = folder.add(this.params, 'text').name('Content');
+                textCtrl.domElement.style.display = 'none';
+
+                const textArea = document.createElement('textarea');
+                textArea.value = this.params.text;
+                textArea.style.cssText = `
+                     width: 100%; box-sizing: border-box; 
+                     min-height: 80px; background: #222; color: #eee;
+                     border-left: 3px solid #00e5ff; border-top: none; border-right: none; border-bottom: none;
+                     padding: 8px; font-family: "Nunito Sans", sans-serif; font-weight: 800; font-size: 14px;
+                     margin: 4px 0 8px 0; resize: vertical; outline: none; display: block;
+                `;
+
+                const container = folder.domElement.querySelector('.children') || folder.domElement;
+                const row = textCtrl.domElement.closest('.controller');
+                if (row && row.parentNode) {
+                    row.parentNode.insertBefore(textArea, row);
+                } else {
+                    container.prepend(textArea);
+                }
+
+                textArea.addEventListener('input', (e) => {
+                    this.params.text = e.target.value;
+                    this.update();
+                });
+
+                const sizeCtrl = folder.add(this.params, 'fontSize', 20, 1000).name('Size').onChange(() => this.update());
+                folder.add(this.params, 'fontWeight', 100, 1000, 10).name('Weight').onChange(() => this.update());
+                folder.add(this.params, 'fontWidth', 0.5, 2.0, 0.01).name('Width').onChange(() => this.update());
+                folder.add(this.params, 'lineHeight', 0.5, 3.0).name('Line Height').onChange(() => this.update());
+                folder.addColor(this.params, 'fillColor').name('Color').onChange(() => this.update());
+                folder.add(this.params, 'fillOpacity', 0.0, 1.0).name('Opacity').onChange(() => this.update());
+                folder.addColor(this.params, 'glowColor').name('Glow Color').onChange(() => this.update());
+                const glowCtrl = folder.add(this.params, 'glowRadius', 0.0, 200.0).name('Glow Radius').onChange(() => this.update());
+                const blurCtrl = folder.add(this.params, 'blurRadius', 0.0, 100.0).name('Blur Radius').onChange(() => this.update());
+                folder.add(this.params, 'visible').name('Show Text').onChange(v => this.mesh.visible = v);
+
+                return { size: sizeCtrl, blur: blurCtrl, glow: glowCtrl };
+            }
+
+            update() {
+                const ctx = this.ctx;
+                const width = this.canvas.width;
+                const height = this.canvas.height;
+                const cx = width / 2;
+                const cy = height / 2;
+
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.clearRect(0, 0, width, height);
+
+                if (!this.params.visible) {
+                    this.texture.needsUpdate = true;
+                    return;
+                }
+
+                ctx.translate(cx, cy);
+                // Inverse Aspect Scaling + Text Width Scaling
+                ctx.scale((1.0 / this.currentAspect) * this.params.fontWidth, 1.0);
+                ctx.translate(-cx, -cy);
+
+                ctx.font = `${this.params.fontWeight} ${this.params.fontSize}px "Nunito Sans", sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                const lines = this.params.text.split('\n');
+                const lineHeightPx = this.params.fontSize * this.params.lineHeight;
+                const totalH = lines.length * lineHeightPx;
+                const startY = cy - (totalH / 2) + (lineHeightPx / 2);
+
+                ctx.save();
+                if (this.params.blurRadius > 0) ctx.filter = `blur(${this.params.blurRadius}px)`;
+                if (this.params.glowRadius > 0) {
+                    ctx.shadowColor = this.params.glowColor;
+                    ctx.shadowBlur = this.params.glowRadius;
+                    ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+                }
+
+                const color = new THREE.Color(this.params.fillColor);
+                ctx.fillStyle = `rgba(${color.r * 255}, ${color.g * 255}, ${color.b * 255}, ${this.params.fillOpacity})`;
+
+                lines.forEach((line, i) => {
+                    ctx.fillText(line, cx, startY + (i * lineHeightPx));
+                });
+
+                ctx.restore();
+                this.texture.needsUpdate = true;
+            }
+        }
+        class AudioReactor {
+            constructor(gui, uniforms) {
+                this.uniforms = uniforms;
+                this.gui = gui;
+                this.audioCtx = null;
+                this.analyser = null;
+                this.source = null;
+                this.frequencyData = null;
+                this.isPlaying = false;
+
+                // Settings
+                this.params = {
+                    lowThreshold: 0.3,
+                    lowGain: 0.5,
+                    highThreshold: 0.3,
+                    highGain: 0.5,
+                    lowInfluenceZoom: 0.0,
+                    highInfluenceGlow: 0.0
+                };
+
+                this.baseValues = {
+                    uScale: uniforms.uScale.value,
+                    uGlow: uniforms.uGlow.value
+                };
+
+                this.setupGUI();
+            }
+
+            setupGUI() {
+                const folder = this.gui.addFolder('Audio Reactivity');
+
+                const fileInput = {
+                    upload: () => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = 'audio/*';
+                        input.onchange = (e) => this.handleFile(e.target.files[0]);
+                        input.click();
+                    }
+                };
+
+                folder.add(fileInput, 'upload').name('ðŸ“‚ Upload Song');
+
+                const controls = {
+                    play: () => this.play(),
+                    stop: () => this.stop()
+                };
+                folder.add(controls, 'play').name('â–¶ Play');
+                folder.add(controls, 'stop').name('â¹ Stop');
+
+                const lowFolder = folder.addFolder('Low Freq (Bass -> Zoom)');
+                lowFolder.add(this.params, 'lowThreshold', 0.0, 1.0).name('Threshold');
+                lowFolder.add(this.params, 'lowGain', 0.0, 2.0).name('Gain');
+                lowFolder.add(this.params, 'lowInfluenceZoom', 0.0, 1.0).name('Influence Zoom');
+
+                const highFolder = folder.addFolder('High Freq (Treble -> Glow)');
+                highFolder.add(this.params, 'highThreshold', 0.0, 1.0).name('Threshold');
+                highFolder.add(this.params, 'highGain', 0.0, 2.0).name('Gain');
+                highFolder.add(this.params, 'highInfluenceGlow', 0.0, 1.0).name('Influence Glow');
+            }
+
+            async handleFile(file) {
+                if (!file) return;
+
+                if (!this.audioCtx) this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
+
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const arrayBuffer = e.target.result;
+                    const audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
+                    this.playBuffer(audioBuffer);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+
+            playBuffer(buffer) {
+                this.stop();
+                this.source = this.audioCtx.createBufferSource();
+                this.source.buffer = buffer;
+                this.analyser = this.audioCtx.createAnalyser();
+                this.analyser.fftSize = 1024;
+                this.frequencyData = new Uint8Array(this.analyser.frequencyBinCount);
+
+                this.source.connect(this.analyser);
+                this.analyser.connect(this.audioCtx.destination);
+
+                this.source.loop = true;
+                this.source.start(0);
+                this.isPlaying = true;
+
+                // Store base values when playback starts so we modulate around them
+                this.baseValues.uScale = this.uniforms.uScale.value;
+                this.baseValues.uGlow = this.uniforms.uGlow.value;
+            }
+
+            play() {
+                if (this.audioCtx && this.audioCtx.state === 'suspended') this.audioCtx.resume();
+            }
+
+            stop() {
+                if (this.source) {
+                    try { this.source.stop(); } catch (e) { }
+                    this.source = null;
+                }
+                this.isPlaying = false;
+                // Reset uniforms
+                this.uniforms.uScale.value = this.baseValues.uScale;
+                this.uniforms.uGlow.value = this.baseValues.uGlow;
+            }
+
+            update() {
+                if (!this.isPlaying || !this.analyser) return;
+
+                this.analyser.getByteFrequencyData(this.frequencyData);
+
+                // Calculate Lows (0-5% of bins roughly)
+                const lowCount = Math.floor(this.frequencyData.length * 0.05);
+                let lowSum = 0;
+                for (let i = 0; i < lowCount; i++) lowSum += this.frequencyData[i];
+                const lowAvg = (lowSum / lowCount) / 255.0; // 0..1
+
+                // Calculate Highs (70-100% of bins)
+                const highStart = Math.floor(this.frequencyData.length * 0.7);
+                let highSum = 0;
+                for (let i = highStart; i < this.frequencyData.length; i++) highSum += this.frequencyData[i];
+                const highAvg = (highSum / (this.frequencyData.length - highStart)) / 255.0;
+
+                // Process Lows -> Zoom
+                if (this.params.lowInfluenceZoom > 0) {
+                    let val = Math.max(0, lowAvg - this.params.lowThreshold) * this.params.lowGain;
+                    // Modulate scale: Base + (Base * val * influence)
+                    this.uniforms.uScale.value = this.baseValues.uScale + (val * this.params.lowInfluenceZoom * 0.5);
+                }
+
+                // Process Highs -> Glow
+                if (this.params.highInfluenceGlow > 0) {
+                    let val = Math.max(0, highAvg - this.params.highThreshold) * this.params.highGain;
+                    this.uniforms.uGlow.value = this.baseValues.uGlow + (val * this.params.highInfluenceGlow * 0.2);
+                }
+            }
+
+            // Call this when user manually changes scale/glow to update base
+            updateBase(name, val) {
+                if (name === 'uScale') this.baseValues.uScale = val;
+                if (name === 'uGlow') this.baseValues.uGlow = val;
+            }
+        }
+
+        class HistoryManager {
+            constructor(uniforms, gui) {
+                this.uniforms = uniforms;
+                this.gui = gui;
+                this.historyStack = [];
+                this.futureStack = []; // For Redo
+                this.maxDepth = 5;
+                this.isRestoring = false;
+
+                // Setup listener on window
+                window.addEventListener('keydown', (e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                        e.preventDefault();
+                        this.undo();
+                    }
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+                        e.preventDefault();
+                        this.redo();
+                    }
+                });
+            }
+
+            snapshot() {
+                if (this.isRestoring) return;
+
+                // Save current state
+                const state = {};
+                for (const k in this.uniforms) {
+                    if (this.uniforms[k].value instanceof THREE.Color) {
+                        state[k] = this.uniforms[k].value.getHex();
+                    } else if (this.uniforms[k].value instanceof THREE.Vector2) {
+                        // ignore resolution
+                        if (k !== 'uResolution') {
+                            state[k] = { x: this.uniforms[k].value.x, y: this.uniforms[k].value.y };
+                        }
+                    } else {
+                        state[k] = this.uniforms[k].value;
+                    }
+                }
+
+                this.historyStack.push(state);
+                if (this.historyStack.length > this.maxDepth) this.historyStack.shift();
+                this.futureStack = []; // Clear redo on new action
+                console.log("Snapshot taken.", this.historyStack.length);
+            }
+
+            undo() {
+                if (this.historyStack.length === 0) return;
+
+                // Capture Current
+                const currentState = {};
+                for (const k in this.uniforms) {
+                    if (this.uniforms[k].value instanceof THREE.Color) {
+                        currentState[k] = this.uniforms[k].value.getHex();
+                    } else if (this.uniforms[k].value instanceof THREE.Vector2) {
+                        if (k !== 'uResolution') {
+                            currentState[k] = { x: this.uniforms[k].value.x, y: this.uniforms[k].value.y };
+                        }
+                    } else {
+                        currentState[k] = this.uniforms[k].value;
+                    }
+                }
+                this.futureStack.push(currentState);
+
+                const prevState = this.historyStack.pop();
+                this.applyState(prevState);
+            }
+
+            redo() {
+                if (this.futureStack.length === 0) return;
+
+                const nextState = this.futureStack.pop();
+
+                // Current state goes to History
+                const currentState = {};
+                for (const k in this.uniforms) {
+                    if (this.uniforms[k].value instanceof THREE.Color) {
+                        currentState[k] = this.uniforms[k].value.getHex();
+                    } else if (this.uniforms[k].value instanceof THREE.Vector2) {
+                        if (k !== 'uResolution') {
+                            currentState[k] = { x: this.uniforms[k].value.x, y: this.uniforms[k].value.y };
+                        }
+                    } else {
+                        currentState[k] = this.uniforms[k].value;
+                    }
+                }
+                this.historyStack.push(currentState);
+
+                this.applyState(nextState);
+            }
+
+            applyState(state) {
+                this.isRestoring = true;
+                for (const k in state) {
+                    if (this.uniforms[k]) {
+                        if (this.uniforms[k].value instanceof THREE.Color) {
+                            this.uniforms[k].value.setHex(state[k]);
+                        } else if (this.uniforms[k].value instanceof THREE.Vector2) {
+                            this.uniforms[k].value.set(state[k].x, state[k].y);
+                        } else {
+                            this.uniforms[k].value = state[k];
+                        }
+                    }
+                }
+                // Force GUI update
+                this.gui.controllersRecursive().forEach(c => c.updateDisplay());
+                this.isRestoring = false;
+            }
+        }
+
+        class LFOManager {
+            constructor(gui, uniforms) {
+                this.gui = gui;
+                this.uniforms = uniforms;
+                this.lfos = [];
+                this.folder = gui.addFolder('LFO Automation');
+
+                this.targets = {
+                    'Select Target...': null,
+                    '[Shape] m (Lobes)': uniforms.uM,
+                    '[Shape] n1 (Valence 1)': uniforms.uN1,
+                    '[Shape] n2 (Valence 2)': uniforms.uN2,
+                    '[Shape] n3 (Valence 3)': uniforms.uN3,
+                    '[Appearance] Thickness': uniforms.uThickness,
+                    '[Appearance] Glow': uniforms.uGlow,
+                    '[Appearance] Scale': uniforms.uScale,
+                    '[Appearance] a (Spread X)': uniforms.uA,
+                    '[Appearance] b (Spread Y)': uniforms.uB,
+                    '[Motion] Rot Speed': uniforms.uRotationSpeed,
+                    '[Motion] Twist': uniforms.uTwist,
+                    '[Geo] Waves': uniforms.uWaves,
+                    '[Geo] Distortion': uniforms.uDistortion,
+                    '[Geo] Dist Scale': uniforms.uDistortionScale,
+                    '[Geo] Fold': uniforms.uFold,
+                    '[FX] Contrast': uniforms.uContrast,
+                    '[FX] Bloom': uniforms.uBloom,
+                    '[FX] Noise': uniforms.uNoise,
+                    '[Array] Count': uniforms.uArrayCount,
+                    '[Array] Step X': { get value() { return uniforms.uArrayStep.value.x; }, set value(v) { uniforms.uArrayStep.value.x = v; } },
+                    '[Array] Step Y': { get value() { return uniforms.uArrayStep.value.y; }, set value(v) { uniforms.uArrayStep.value.y = v; } },
+                    '[Array] Rotation': uniforms.uArrayRotation,
+                    '[Array] Scale': uniforms.uArrayScale,
+                };
+                this.controllers = {};
+                const conf = { addLFO: () => this.addLFO() };
+                this.folder.add(conf, 'addLFO').name('+ Add LFO Instance');
+            }
+
+            registerController(name, controller) {
+                this.controllers[name] = controller;
+            }
+            registerParticleUniforms(uniforms) {
+                this.targets['[Particles] Speed'] = uniforms.uSpeed;
+                this.targets['[Particles] Size'] = uniforms.uSize;
+                this.targets['[Particles] Lifespan'] = uniforms.uLifespan;
+                this.targets['[Particles] Turbulence'] = uniforms.uTurbulence;
+            }
+            registerTextTargets(textOverlay, controllers) {
+                this.targets['[Text] Size'] = {
+                    get value() { return textOverlay.params.fontSize; },
+                    set value(v) { textOverlay.params.fontSize = v; textOverlay.update(); }
+                };
+                if (controllers && controllers.size) this.registerController('[Text] Size', controllers.size);
+
+                this.targets['[Text] Blur'] = {
+                    get value() { return textOverlay.params.blurRadius; },
+                    set value(v) { textOverlay.params.blurRadius = v; textOverlay.update(); }
+                };
+                if (controllers && controllers.blur) this.registerController('[Text] Blur', controllers.blur);
+
+                this.targets['[Text] Glow'] = {
+                    get value() { return textOverlay.params.glowRadius; },
+                    set value(v) { textOverlay.params.glowRadius = v; textOverlay.update(); }
+                };
+                if (controllers && controllers.glow) this.registerController('[Text] Glow', controllers.glow);
+            }
+            registerColorHueTargets(uniforms) {
+                this.targets['[Look] Color Hue'] = {
+                    get value() { const hsl = {}; uniforms.uColor.value.getHSL(hsl); return hsl.h; },
+                    set value(v) {
+                        const hsl = {}; uniforms.uColor.value.getHSL(hsl);
+                        // Wrap v 0-1
+                        let h = v % 1.0;
+                        if (h < 0) h += 1.0;
+                        uniforms.uColor.value.setHSL(h, hsl.s, hsl.l);
+                    }
+                };
+                this.targets['[Look] BG Hue'] = {
+                    get value() { const hsl = {}; uniforms.uBackgroundColor.value.getHSL(hsl); return hsl.h; },
+                    set value(v) {
+                        const hsl = {}; uniforms.uBackgroundColor.value.getHSL(hsl);
+                        let h = v % 1.0;
+                        if (h < 0) h += 1.0;
+                        uniforms.uBackgroundColor.value.setHSL(h, hsl.s, hsl.l);
+                    }
+                };
+            }
+
+            addLFO() {
+                const id = this.lfos.length + 1;
+                const lfo = new LFO(`LFO ${id}`, this);
+                this.lfos.push(lfo);
+
+                const f = this.folder.addFolder(lfo.name);
+                lfo.folder = f;
+
+                f.add(lfo, 'enabled').name('Active / Bypass');
+                f.add(lfo, 'target', Object.keys(this.targets)).name('Target Param')
+                    .onChange(() => this.resetControllers());
+
+                f.add(lfo, 'waveform', ['Sine', 'Square', 'Triangle', 'Sawtooth', 'Noise']).name('Shape');
+                f.add(lfo, 'frequency', 0.01, 5.0).name('Freq (Hz)');
+
+                // NEW: Min/Max Controls
+                f.add(lfo, 'min', -10.0, 50.0).name('Min Value');
+                f.add(lfo, 'max', -10.0, 50.0).name('Max Value');
+
+                f.add({ remove: () => this.removeLFO(lfo) }, 'remove').name('Remove LFO');
+
+                setTimeout(() => {
+                    try {
+                        const children = f.domElement.querySelector('.children');
+                        if (children) { children.insertBefore(lfo.visCanvas, children.firstChild); }
+                        else { f.domElement.appendChild(lfo.visCanvas); }
+                    } catch (e) { console.error('LFO Vis Injection failed', e); }
+                }, 10);
+            }
+
+            removeLFO(lfo) {
+                const idx = this.lfos.indexOf(lfo);
+                if (idx > -1) {
+                    this.lfos.splice(idx, 1);
+                    lfo.folder.destroy();
+                    this.resetControllers();
+                }
+            }
+
+            disableController(name, disable) {
+                if (this.controllers[name]) this.controllers[name].disable(disable);
+            }
+
+            resetControllers() {
+                // Force enable all first
+                Object.values(this.controllers).forEach(c => {
+                    if (c) c.disable(false);
+                });
+            }
+
+            update(time) {
+                this.resetControllers();
+                this.lfos.forEach(l => {
+                    const val = l.update(time);
+                    if (l.enabled && l.folder) l.drawVis(val);
+                });
+            }
+        }
+
+
+
+        // --- MAIN APP ---
+
+        const container = document.getElementById('canvas-container');
+        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+
+        // ASPECT RATIO HANDLING
+        // To prevent stretching, we need the camera frustum width to match the aspect ratio
+        const aspect = window.innerWidth / window.innerHeight;
+        // Height is fixed from -1 to 1 (size 2). Width spans -aspect to aspect.
+        const camera = new THREE.OrthographicCamera(-aspect, aspect, 1, -1, 0.1, 10);
+        camera.position.z = 1;
+
+        // Update uniforms for correct aspect in shader
+        const uniforms = {
+            uTime: { value: 0 },
+            uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+            uAspect: { value: aspect }, // Pass aspect to shader if needed, or handle via geometry scale
+            uM: { value: 6.0 },
+            uN1: { value: 1.0 },
+            uN2: { value: 1.0 },
+            uN3: { value: 1.0 },
+            uA: { value: 1.0 },
+            uB: { value: 1.0 },
+            uScale: { value: 0.3 },
+            uThickness: { value: 0.02 }, // Line thickness
+            uGlow: { value: 0.05 },
+            uRotationSpeed: { value: 0.0 },
+            uTwist: { value: 0.0 },
+            uWaves: { value: 0.0 },
+            uDistortion: { value: 0.0 },
+            uDistortionScale: { value: 0.1 },
+            uFold: { value: 1.0 },
+            uContrast: { value: 1.0 },
+            uBloom: { value: 0.0 },
+            uNoise: { value: 0.0 },
+            uColor: { value: new THREE.Color(0xff0055) },
+            uBackgroundColor: { value: new THREE.Color(0x111111) },
+            // Array System
+            uArrayCount: { value: 1.0 }, // 1 to 20
+            uArrayStep: { value: new THREE.Vector2(0.0, 0.0) },
+            uArrayRotation: { value: 0.0 },
+            uArrayRotation: { value: 0.0 },
+            uArrayRotation: { value: 0.0 },
+            uArrayScale: { value: 1.0 }
+        };
+
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        // We scale the MESH X to match aspect ratio so the UVs are 1:1 in world space
+        // This effectively makes the quad cover the whole screen without stretching the content 
+        // IF the shader uses screen UVs properly. 
+        // Actually, for Gielis shader which is centered, if we have a square domain -1..1, 
+        // we might prefer to keep the mesh 2x2.
+        // BUT if we change camera left/right to -aspect/aspect, then a 2x2 mesh will look thin.
+        // So we MUST scale the mesh to cover the new frustum.
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader,
+            uniforms,
+            extensions: {
+                derivatives: true
+            }
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.scale.set(aspect, 1, 1);
+        mesh.renderOrder = 0;
+        scene.add(mesh);
+
+        // --- SPLIT UI SETUP (LEFT MAIN / BOTTOM LEFT EXPORT) ---
+
+        // Create Main Container (Top Left)
+        const guiMainContainer = document.createElement('div');
+        guiMainContainer.className = 'gui-main';
+        document.body.appendChild(guiMainContainer);
+
+        // Create Export Container (Bottom Left)
+        const guiExportContainer = document.createElement('div');
+        guiExportContainer.className = 'gui-export';
+        document.body.appendChild(guiExportContainer);
+
+        // UI Instances
+        const guiMain = new GUI({ container: guiMainContainer, width: 320, title: 'MAIN CONTROLS' });
+        const guiExport = new GUI({ container: guiExportContainer, width: 320, title: 'EXPORT' });
+
+        // Restore Custom Title to the MAIN UI
+        const titleEl = guiMain.domElement.querySelector('.title');
+        if (titleEl) {
+            titleEl.innerHTML = `
+                <div style="font-size: 24px; font-weight: 800; letter-spacing: 1px;">SUPERFORMULA LAB</div>
+                <div style="font-size: 12px; opacity: 0.6; font-weight: 400; margin-top: 4px;">
+                    Made by <a href="https://ivanosalonia.xyz" target="_blank" style="color: inherit; text-decoration: underline;">Ivano Salonia</a>
+                </div>
+            `;
+            titleEl.style.height = 'auto';
+            titleEl.style.padding = '15px';
+        }
+
+        // --- LEFT UI: PRESETS & EXPORT ---
+
+        // Text Overlay (Dependency)
+        // Instantiated early for dependencies, but GUI attached later
+        // Text Overlay (Dependency)
+        // Instantiated early for dependencies, but GUI attached later
+        const textOverlay = new WebGLTextOverlay(null, scene, camera, renderer);
+
+        // 1. EXPORT STUDIO (Bottom Left - guiExport)
+        const recorder = new Recorder(renderer.domElement, renderer, uniforms, camera, mesh, textOverlay);
+        // FORCE 'Window' default state in case Recoder init is different
+        // Ensure options list has 'Window' and remove duplicates using Set
+        const formatOptions = [...new Set(['Window', ...Object.keys(recorder.ratios)])];
+
+        // Directly add to guiExport (No "Export Studio" folder needed if it's the main thing)
+        // Or keep folder if we want multiple sections like "Frame Sequence"
+
+        guiExport.add(recorder.settings, 'format', formatOptions)
+            .name('Aspect Ratio')
+            .onChange(() => {
+                recorder.settings.format = recorder.settings.format;
+                recorder.resizeForExport();
+            });
+
+        guiExport.add(recorder.settings, 'bitrate', [8000000, 16000000, 50000000, 100000000, 500000000])
+            .name('Bitrate (bps)')
+            .onChange(v => recorder.settings.bitrate = Number(v));
+
+        guiExport.add(recorder.settings, 'exportFPS', [30, 60]).name('Recording FPS');
+        guiExport.add({ snap: () => recorder.takeSnapshot() }, 'snap').name('Take Snapshot (PNG)');
+        const recObj = { toggle: () => recorder.toggleRecord(isRec => { recCtrl.name(isRec ? 'Stop Recording' : 'Start Recording'); }) };
+        const recCtrl = guiExport.add(recObj, 'toggle').name('Start Recording');
+
+        // Sequence
+        const seqFolder = guiExport.addFolder('Frame Sequence');
+        seqFolder.add(recorder.settings, 'exportDuration', 1.0, 30.0, 0.5).name('Duration (s)');
+        seqFolder.add({ export: () => recorder.exportSequence(scene, camera, uniforms, lfoManager) }, 'export').name('Render Sequence (ZIP)');
+
+
+        // --- MAIN UI: PARAMS & PRESETS ---
+
+        // Presets (Lives in guiMain, at the bottom or top? Let's verify usage)
+        // Let's instantiate LFO/History first so they attach to guiMain
+        // Then append Presets at the end
+
+        const historyManager = new HistoryManager(uniforms, guiMain);
+        function bindHistory(controller) {
+            controller.onFinishChange(() => historyManager.snapshot());
+            return controller;
+        }
+
+        const lfoManager = new LFOManager(guiMain, uniforms);
+
+        // 1. SHAPE
+        const fShape = guiMain.addFolder('Gielis Parameters');
+        lfoManager.registerController('[Shape] m (Lobes)', bindHistory(fShape.add(uniforms.uM, 'value', 0.0, 20.0).name('m (Lobes)')));
+        lfoManager.registerController('[Shape] n1 (Valence 1)', bindHistory(fShape.add(uniforms.uN1, 'value', 0.1, 50.0).name('n1 (Valence 1)')));
+        lfoManager.registerController('[Shape] n2 (Valence 2)', bindHistory(fShape.add(uniforms.uN2, 'value', 0.1, 50.0).name('n2 (Valence 2)')));
+        lfoManager.registerController('[Shape] n3 (Valence 3)', bindHistory(fShape.add(uniforms.uN3, 'value', 0.1, 50.0).name('n3 (Valence 3)')));
+
+        // 2. LOOK
+        const fLook = guiMain.addFolder('Appearance');
+        lfoManager.registerController('[Appearance] Thickness', bindHistory(fLook.add(uniforms.uThickness, 'value', 0.001, 0.1).name('Line Thickness')));
+        lfoManager.registerController('[Appearance] Glow', bindHistory(fLook.add(uniforms.uGlow, 'value', 0.0, 0.5).name('Glow Amount')));
+        lfoManager.registerController('[Appearance] Scale', bindHistory(fLook.add(uniforms.uScale, 'value', 0.1, 2.0).name('Global Scale')));
+        lfoManager.registerController('[Appearance] a (Spread X)', bindHistory(fLook.add(uniforms.uA, 'value', 0.1, 5.0).name('a (Spread X)')));
+        lfoManager.registerController('[Appearance] b (Spread Y)', bindHistory(fLook.add(uniforms.uB, 'value', 0.1, 5.0).name('b (Spread Y)')));
+        bindHistory(fLook.addColor(uniforms.uColor, 'value').name('Shape Color'));
+        bindHistory(fLook.addColor(uniforms.uBackgroundColor, 'value').name('Background Color'));
+
+        // 3. MOTION
+        const fMotion = guiMain.addFolder('Geometry & Array');
+        lfoManager.registerController('[Motion] Rot Speed', bindHistory(fMotion.add(uniforms.uRotationSpeed, 'value', -2.0, 2.0).name('Rotation Speed')));
+        lfoManager.registerController('[Motion] Twist', bindHistory(fMotion.add(uniforms.uTwist, 'value', -5.0, 5.0).name('Twist (Spirals)')));
+        lfoManager.registerController('[Geo] Waves', bindHistory(fMotion.add(uniforms.uWaves, 'value', 0.0, 0.5).name('Waves (Displace)')));
+        lfoManager.registerController('[Geo] Distortion', bindHistory(fMotion.add(uniforms.uDistortion, 'value', 0.0, 1.0).name('Distortion')));
+        lfoManager.registerController('[Geo] Dist Scale', bindHistory(fMotion.add(uniforms.uDistortionScale, 'value', 0.0, 1.0).name('Distortion Scale')));
+        lfoManager.registerController('[Geo] Fold', bindHistory(fMotion.add(uniforms.uFold, 'value', 1.0, 10.0, 1.0).name('Fold (Kaleidoscope)')));
+
+        fMotion.add(uniforms.uArrayCount, 'value', 1.0, 20.0, 1.0).name('Array Count');
+        fMotion.add(uniforms.uArrayStep.value, 'x', -1.0, 1.0).name('Array Step X');
+        fMotion.add(uniforms.uArrayStep.value, 'y', -1.0, 1.0).name('Array Step Y');
+        fMotion.add(uniforms.uArrayRotation, 'value', -3.14, 3.14).name('Array Rotation');
+        fMotion.add(uniforms.uArrayScale, 'value', 0.5, 1.5).name('Array Scale');
+
+        // 4. FX
+        const fFX = guiMain.addFolder('Post Processing');
+        lfoManager.registerController('[FX] Contrast', bindHistory(fFX.add(uniforms.uContrast, 'value', 0.5, 2.0).name('Contrast')));
+        lfoManager.registerController('[FX] Bloom', bindHistory(fFX.add(uniforms.uBloom, 'value', 0.0, 1.0).name('Bloom (Glow)')));
+        lfoManager.registerController('[FX] Noise', bindHistory(fFX.add(uniforms.uNoise, 'value', 0.0, 0.5).name('Noise (Grain)')));
+
+        // 5. TEXT
+        const fText = guiMain.addFolder('Text Overlay');
+        const textControllers = textOverlay.setupGUI(fText);
+
+        // Register Text Targets for LFO (NOW with Controllers)
+        lfoManager.registerTextTargets(textOverlay, textControllers);
+
+        // --- LFO MANAGER (MOVED BELOW GEOMETRY) ---
+        // Just logically, but in lil-gui folders appear in creation order. 
+        // We created lfoManager early. To move it down, we need to defer the addFolder calls or re-append.
+        // Quickest way: destroy and recreate? NO, state is there.
+        // Lil-gui doesn't support easy reorder.
+        // We will just append the folder.domElement to the end of the list.
+        setTimeout(() => {
+            const root = guiMain.domElement.querySelector('.children');
+            if (root && lfoManager.folder.domElement.parentElement === root) {
+                root.appendChild(lfoManager.folder.domElement);
+            }
+        }, 100);
+
+        // Register Color Targets
+        lfoManager.registerColorHueTargets(uniforms);
+
+        // 6. PRESETS (Append at bottom of Main)
+        const presetManager = new PresetManager(guiMain, uniforms, textOverlay, null);
+
+        // --- ACCORDION LOGIC ---
+        // Auto-close other folders when one is opened
+        setTimeout(() => {
+            if (guiMain && guiMain.folders) {
+                guiMain.folders.forEach(f => {
+                    // 1. Set Default State
+                    if (f._title === 'Gielis Parameters') f.open();
+                    else f.close();
+
+                    // 2. Add Listener
+                    f.onOpenClose(changed => {
+                        // If the folder was just OPENED (so it is NOT closed)
+                        if (!changed._closed) {
+                            guiMain.folders.forEach(other => {
+                                if (other !== changed) other.close();
+                            });
+                        }
+                    });
+                });
+            }
+        }, 300); // 300ms to ensure LFO folder move is complete
+
+        // Animation Loop
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            if (window.isExporting) return; // Pause main loop during export
+
+            const time = clock.getElapsedTime();
+            uniforms.uTime.value = time;
+            updateFPS();
+            lfoManager.update(time);
+            lfoManager.update(time);
+
+            // Render
+            textOverlay.update(); // Pulse or animate if needed
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            // Check if we are in a fixed aspect ratio mode
+            if (recorder && recorder.settings.format !== 'Window') {
+                // If fixed, DO NOT resize the renderer or camera. 
+                // The CSS will handle the visual scaling (contain).
+                // We might just want to ensure the canvas style is correct? 
+                // For now, simply ignoring the event preserves the export resolution.
+                return;
+            }
+
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const asp = w / h;
+
+            // Update Camera Frustum to match window aspect (Height fixed at 2 [-1 to 1])
+            camera.left = -asp;
+            camera.right = asp;
+            camera.top = 1;
+            camera.bottom = -1;
+            camera.updateProjectionMatrix();
+
+            // Scale Mesh to fill new Frustum
+            mesh.scale.set(asp, 1, 1);
+
+            renderer.setSize(w, h);
+            uniforms.uResolution.value.set(w, h);
+
+            if (textOverlay) {
+                textOverlay.resize(w, h);
+            }
+        });
+    </script>
+</body>
+
+</html>
