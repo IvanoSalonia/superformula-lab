@@ -713,7 +713,8 @@
                     const baseUrl = 'https://ivanosalonia.github.io/superformula-lab/';
                     const fullUrl = `${baseUrl}?state=${encoded}&embed=true`;
 
-                    const iframe = `<iframe src="${fullUrl}" width="100%" height="100%" frameborder="0" allowfullscreen style="width:100%; height:100%; border:none; display:block;"></iframe>`;
+                    // Responsive 16:9 Container
+                    const iframe = `<div style="position:relative; width:100%; height:0; padding-bottom:56.25%;"><iframe src="${fullUrl}" style="position:absolute; top:0; left:0; width:100%; height:100%; border:none;" allowfullscreen></iframe></div>`;
 
                     navigator.clipboard.writeText(iframe).then(() => {
                         alert('Embed code copied to clipboard!');
@@ -1647,6 +1648,13 @@
                 guis.forEach(g => g.style.display = 'none');
                 const fps = document.querySelector('.fps-counter');
                 if (fps) fps.style.display = 'none';
+
+                // Force Window (Responsive) Mode
+                if (recorder) {
+                    recorder.settings.format = 'Window';
+                    // Force resize check
+                    window.dispatchEvent(new Event('resize'));
+                }
             }
 
             const state = params.get('state');
