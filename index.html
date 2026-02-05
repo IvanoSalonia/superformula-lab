@@ -670,6 +670,17 @@
             }
 
             savePreset() {
+                const data = this.getPresetData();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `preset_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            getPresetData() {
                 const data = {
                     metadata: {
                         timestamp: new Date().toISOString(),
@@ -690,14 +701,27 @@
                         data.uniforms[key] = u.value;
                     }
                 }
+                return data;
+            }
 
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `preset_${Date.now()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
+            // Generate Embed Code
+            copyEmbedCode() {
+                const data = this.getPresetData();
+                try {
+                    const json = JSON.stringify(data);
+                    const encoded = btoa(json); // Base64 encode
+                    const baseUrl = 'https://ivanosalonia.github.io/superformula-lab/';
+                    const fullUrl = `${baseUrl}?state=${encoded}`;
+
+                    const iframe = `<iframe src="${fullUrl}" width="100%" height="100%" frameborder="0" allowfullscreen style="width:100%; height:100%; border:none; display:block;"></iframe>`;
+
+                    navigator.clipboard.writeText(iframe).then(() => {
+                        alert('Embed code copied to clipboard!');
+                    });
+                } catch (e) {
+                    console.error('Embed generation failed', e);
+                    alert('Failed to generate embed code: ' + e.message);
+                }
             }
 
             loadPreset(file) {
@@ -1453,6 +1477,10 @@
         const recObj = { toggle: () => recorder.toggleRecord(isRec => { recCtrl.name(isRec ? 'Stop Recording' : 'Start Recording'); }) };
         const recCtrl = guiExport.add(recObj, 'toggle').name('Start Recording');
 
+        // Embed / Share
+        const embedObj = { copy: () => presetManager.copyEmbedCode() };
+        guiExport.add(embedObj, 'copy').name('Copy Embed Code');
+
         // Sequence
         const seqFolder = guiExport.addFolder('Frame Sequence');
         seqFolder.add(recorder.settings, 'exportDuration', 1.0, 30.0, 0.5).name('Duration (s)');
@@ -1606,6 +1634,23 @@
 
             if (textOverlay) {
                 textOverlay.resize(w, h);
+            }
+        });
+
+        // Initialize State from URL (if present)
+        window.addEventListener('load', () => {
+            const params = new URLSearchParams(window.location.search);
+            const state = params.get('state');
+            if (state) {
+                try {
+                    const json = atob(state);
+                    const data = JSON.parse(json);
+                    console.log('Restoring state from URL...');
+                    // Add small delay to ensure GUI is fully built
+                    setTimeout(() => presetManager.applyPreset(data), 100);
+                } catch (e) {
+                    console.error('Failed to load state from URL', e);
+                }
             }
         });
     </script>
