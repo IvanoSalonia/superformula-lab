@@ -634,11 +634,12 @@
         }
 
         class PresetManager {
-            constructor(gui, uniforms, textOverlay, audioReactor) {
+            constructor(gui, uniforms, textOverlay, audioReactor, lfoManager) {
                 this.gui = gui;
                 this.uniforms = uniforms;
                 this.textOverlay = textOverlay;
                 this.audioReactor = audioReactor;
+                this.lfoManager = lfoManager;
 
                 this.setupGUI();
             }
@@ -688,7 +689,8 @@
                     },
                     uniforms: {},
                     textOverlay: this.textOverlay.params,
-                    audioReactor: this.audioReactor ? this.audioReactor.params : null
+                    audioReactor: this.audioReactor ? this.audioReactor.params : null,
+                    lfos: this.lfoManager ? this.lfoManager.serialize() : []
                 };
 
                 // Extract Uniforms
@@ -769,6 +771,11 @@
                         uScale: this.uniforms.uScale.value,
                         uGlow: this.uniforms.uGlow.value
                     };
+                }
+
+                // 4. LFOs
+                if (data.lfos && this.lfoManager) {
+                    this.lfoManager.deserialize(data.lfos);
                 }
 
                 // Refresh GUI
@@ -1338,6 +1345,45 @@
                     if (l.enabled && l.folder) l.drawVis(val);
                 });
             }
+
+            serialize() {
+                return this.lfos.map(l => ({
+                    name: l.name,
+                    enabled: l.enabled,
+                    target: l.target,
+                    waveform: l.waveform,
+                    frequency: l.frequency,
+                    min: l.min,
+                    max: l.max
+                }));
+            }
+
+            deserialize(data) {
+                if (!data || !Array.isArray(data)) return;
+
+                // Clear existing
+                // Since removing modifies array, loop backwards or use while
+                while (this.lfos.length > 0) {
+                    this.removeLFO(this.lfos[0]);
+                }
+
+                data.forEach((d, i) => {
+                    this.addLFO(); // Adds new LFO at end
+                    const lfo = this.lfos[this.lfos.length - 1];
+
+                    // Apply params
+                    // We need to update the GUI controllers too
+                    lfo.enabled = d.enabled;
+                    lfo.target = d.target;
+                    lfo.waveform = d.waveform;
+                    lfo.frequency = d.frequency;
+                    lfo.min = d.min;
+                    lfo.max = d.max;
+
+                    // Update GUI
+                    lfo.folder.controllers.forEach(c => c.updateDisplay());
+                });
+            }
         }
 
 
@@ -1564,7 +1610,7 @@
         lfoManager.registerColorHueTargets(uniforms);
 
         // 6. PRESETS (Append at bottom of Main)
-        const presetManager = new PresetManager(guiMain, uniforms, textOverlay, null);
+        const presetManager = new PresetManager(guiMain, uniforms, textOverlay, null, lfoManager);
 
         // --- ACCORDION LOGIC ---
         // Auto-close other folders when one is opened
