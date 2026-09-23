@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500&family=Inter:wght@400;600&family=Archivo+Black&family=Nunito+Sans:ital,opsz,wght@0,6..12,200..1000;1,6..12,200..1000&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500&display=swap"
         rel="stylesheet">
     <style>
         /* ============================================================
@@ -892,13 +892,12 @@
         }
 
         class Recorder {
-            constructor(canvas, renderer, uniforms, camera, mesh, textOverlay) {
+            constructor(canvas, renderer, uniforms, camera, mesh) {
                 this.canvas = canvas;
                 this.renderer = renderer;
                 this.uniforms = uniforms;
                 this.camera = camera;
                 this.mesh = mesh;
-                this.textOverlay = textOverlay;
                 this.mediaRecorder = null;
                 this.chunks = [];
                 this.isRecording = false;
@@ -943,9 +942,6 @@
                 }
                 if (this.mesh) {
                     this.mesh.scale.set(asp, 1, 1);
-                }
-                if (this.textOverlay) {
-                    this.textOverlay.resize(w, h);
                 }
             }
 
@@ -1154,10 +1150,9 @@
         }
 
         class PresetManager {
-            constructor(gui, uniforms, textOverlay, audioReactor, lfoManager) {
+            constructor(gui, uniforms, audioReactor, lfoManager) {
                 this.gui = gui;
                 this.uniforms = uniforms;
-                this.textOverlay = textOverlay;
                 this.audioReactor = audioReactor;
                 this.lfoManager = lfoManager;
 
@@ -1208,7 +1203,6 @@
                         version: '1.0'
                     },
                     uniforms: {},
-                    textOverlay: this.textOverlay.params,
                     audioReactor: this.audioReactor ? this.audioReactor.params : null,
                     lfos: this.lfoManager ? this.lfoManager.serialize() : []
                 };
@@ -1275,15 +1269,7 @@
                     }
                 }
 
-                // 2. Text Overlay
-                if (data.textOverlay) {
-                    Object.assign(this.textOverlay.params, data.textOverlay);
-                    if (data.textOverlay.fontSizeVal) this.textOverlay.params.fontSizeVal = data.textOverlay.fontSizeVal;
-                    // Force update
-                    this.textOverlay.update();
-                }
-
-                // 3. Audio Reactor
+                // 2. Audio Reactor
                 if (data.audioReactor && this.audioReactor) {
                     Object.assign(this.audioReactor.params, data.audioReactor);
                     // Update base values
@@ -1300,160 +1286,6 @@
 
                 // Refresh GUI
                 this.gui.controllersRecursive().forEach(c => c.updateDisplay());
-            }
-        }
-        class WebGLTextOverlay {
-            constructor(gui, scene, camera, renderer) {
-                this.scene = scene;
-                this.camera = camera;
-
-                // 1. FIXED Canvas Size (Power of Two)
-                const SIZE = 4096;
-                this.canvas = document.createElement('canvas');
-                this.canvas.width = SIZE;
-                this.canvas.height = SIZE;
-                this.ctx = this.canvas.getContext('2d');
-
-                // Track Aspect Ratio
-                this.currentAspect = window.innerWidth / window.innerHeight;
-
-                // 2. Texture
-                this.texture = new THREE.CanvasTexture(this.canvas);
-                this.texture.minFilter = THREE.LinearFilter;
-                this.texture.magFilter = THREE.LinearFilter;
-                this.texture.generateMipmaps = false;
-                this.texture.wrapS = THREE.ClampToEdgeWrapping;
-                this.texture.wrapT = THREE.ClampToEdgeWrapping;
-
-                // 3. Mesh ( Standard 2x2 Plane )
-                // Maps UV 0..1 to -1..1 coordinates
-                this.geometry = new THREE.PlaneGeometry(2, 2);
-                this.material = new THREE.MeshBasicMaterial({
-                    map: this.texture,
-                    transparent: true,
-                    opacity: 1.0,
-                    side: THREE.DoubleSide,
-                    depthWrite: false,
-                    depthTest: false,
-                    blending: THREE.NormalBlending
-                });
-
-                this.mesh = new THREE.Mesh(this.geometry, this.material);
-                this.mesh.position.set(0, 0, 0.1);
-                this.mesh.renderOrder = 999;
-
-                // Initial Scale
-                if (this.mesh) {
-                    this.mesh.scale.set(this.currentAspect, 1, 1);
-                }
-
-                scene.add(this.mesh);
-
-                this.params = {
-                    text: 'TYPE\nSOMETHING',
-                    fontSize: 250,
-                    fontWeight: 900,
-                    fontWidth: 1.0,
-                    lineHeight: 1.0,
-                    fillColor: '#ffffff',
-                    fillOpacity: 1.0,
-                    glowColor: '#00ffff',
-                    glowRadius: 0.0,
-                    blurRadius: 0.0,
-                    visible: false
-                };
-
-                document.fonts.ready.then(() => this.update());
-            }
-
-            resize(width, height) {
-                this.currentAspect = width / height;
-                if (this.mesh) this.mesh.scale.set(this.currentAspect, 1, 1);
-                this.update();
-            }
-
-            setupGUI(folder) {
-                const textCtrl = folder.add(this.params, 'text').name('Content');
-                textCtrl.domElement.style.display = 'none';
-
-                const textArea = document.createElement('textarea');
-                textArea.value = this.params.text;
-                textArea.className = 'sf-textarea';
-                textArea.spellcheck = false;
-
-                const container = folder.domElement.querySelector('.children') || folder.domElement;
-                const row = textCtrl.domElement.closest('.controller');
-                if (row && row.parentNode) {
-                    row.parentNode.insertBefore(textArea, row);
-                } else {
-                    container.prepend(textArea);
-                }
-
-                textArea.addEventListener('input', (e) => {
-                    this.params.text = e.target.value;
-                    this.update();
-                });
-
-                const sizeCtrl = folder.add(this.params, 'fontSize', 20, 1000).name('Size').onChange(() => this.update());
-                folder.add(this.params, 'fontWeight', 100, 1000, 10).name('Weight').onChange(() => this.update());
-                folder.add(this.params, 'fontWidth', 0.5, 2.0, 0.01).name('Width').onChange(() => this.update());
-                folder.add(this.params, 'lineHeight', 0.5, 3.0).name('Line Height').onChange(() => this.update());
-                folder.addColor(this.params, 'fillColor').name('Color').onChange(() => this.update());
-                folder.add(this.params, 'fillOpacity', 0.0, 1.0).name('Opacity').onChange(() => this.update());
-                folder.addColor(this.params, 'glowColor').name('Glow Color').onChange(() => this.update());
-                const glowCtrl = folder.add(this.params, 'glowRadius', 0.0, 200.0).name('Glow Radius').onChange(() => this.update());
-                const blurCtrl = folder.add(this.params, 'blurRadius', 0.0, 100.0).name('Blur Radius').onChange(() => this.update());
-                folder.add(this.params, 'visible').name('Show Text').onChange(v => this.mesh.visible = v);
-
-                return { size: sizeCtrl, blur: blurCtrl, glow: glowCtrl };
-            }
-
-            update() {
-                const ctx = this.ctx;
-                const width = this.canvas.width;
-                const height = this.canvas.height;
-                const cx = width / 2;
-                const cy = height / 2;
-
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.clearRect(0, 0, width, height);
-
-                if (!this.params.visible) {
-                    this.texture.needsUpdate = true;
-                    return;
-                }
-
-                ctx.translate(cx, cy);
-                // Inverse Aspect Scaling + Text Width Scaling
-                ctx.scale((1.0 / this.currentAspect) * this.params.fontWidth, 1.0);
-                ctx.translate(-cx, -cy);
-
-                ctx.font = `${this.params.fontWeight} ${this.params.fontSize}px "Nunito Sans", sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-
-                const lines = this.params.text.split('\n');
-                const lineHeightPx = this.params.fontSize * this.params.lineHeight;
-                const totalH = lines.length * lineHeightPx;
-                const startY = cy - (totalH / 2) + (lineHeightPx / 2);
-
-                ctx.save();
-                if (this.params.blurRadius > 0) ctx.filter = `blur(${this.params.blurRadius}px)`;
-                if (this.params.glowRadius > 0) {
-                    ctx.shadowColor = this.params.glowColor;
-                    ctx.shadowBlur = this.params.glowRadius;
-                    ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-                }
-
-                const color = new THREE.Color(this.params.fillColor);
-                ctx.fillStyle = `rgba(${color.r * 255}, ${color.g * 255}, ${color.b * 255}, ${this.params.fillOpacity})`;
-
-                lines.forEach((line, i) => {
-                    ctx.fillText(line, cx, startY + (i * lineHeightPx));
-                });
-
-                ctx.restore();
-                this.texture.needsUpdate = true;
             }
         }
         class AudioReactor {
@@ -1762,25 +1594,6 @@
                 this.targets['[Particles] Lifespan'] = uniforms.uLifespan;
                 this.targets['[Particles] Turbulence'] = uniforms.uTurbulence;
             }
-            registerTextTargets(textOverlay, controllers) {
-                this.targets['[Text] Size'] = {
-                    get value() { return textOverlay.params.fontSize; },
-                    set value(v) { textOverlay.params.fontSize = v; textOverlay.update(); }
-                };
-                if (controllers && controllers.size) this.registerController('[Text] Size', controllers.size);
-
-                this.targets['[Text] Blur'] = {
-                    get value() { return textOverlay.params.blurRadius; },
-                    set value(v) { textOverlay.params.blurRadius = v; textOverlay.update(); }
-                };
-                if (controllers && controllers.blur) this.registerController('[Text] Blur', controllers.blur);
-
-                this.targets['[Text] Glow'] = {
-                    get value() { return textOverlay.params.glowRadius; },
-                    set value(v) { textOverlay.params.glowRadius = v; textOverlay.update(); }
-                };
-                if (controllers && controllers.glow) this.registerController('[Text] Glow', controllers.glow);
-            }
             registerColorHueTargets(uniforms) {
                 this.targets['[Look] Color Hue'] = {
                     get value() { const hsl = {}; uniforms.uColor.value.getHSL(hsl); return hsl.h; },
@@ -2004,14 +1817,8 @@
 
         // --- LEFT UI: PRESETS & EXPORT ---
 
-        // Text Overlay (Dependency)
-        // Instantiated early for dependencies, but GUI attached later
-        // Text Overlay (Dependency)
-        // Instantiated early for dependencies, but GUI attached later
-        const textOverlay = new WebGLTextOverlay(null, scene, camera, renderer);
-
         // 1. EXPORT STUDIO (Bottom Left - guiExport)
-        const recorder = new Recorder(renderer.domElement, renderer, uniforms, camera, mesh, textOverlay);
+        const recorder = new Recorder(renderer.domElement, renderer, uniforms, camera, mesh);
         // FORCE 'Window' default state in case Recoder init is different
         // Ensure options list has 'Window' and remove duplicates using Set
         const formatOptions = [...new Set(['Window', ...Object.keys(recorder.ratios)])];
@@ -2067,7 +1874,7 @@
 
         // 1. SHAPE
         const fShape = guiMain.addFolder('Gielis Parameters');
-        lfoManager.registerController('[Shape] m (Lobes)', bindHistory(fShape.add(uniforms.uM, 'value', 0, 20, 1).name('m (Lobes)')));
+        lfoManager.registerController('[Shape] m (Lobes)', bindHistory(fShape.add(uniforms.uM, 'value', 0, 20, 2).name('m (Lobes)')));
         lfoManager.registerController('[Shape] n1 (Valence 1)', bindHistory(fShape.add(uniforms.uN1, 'value', 0.1, 50.0).name('n1 (Valence 1)')));
         lfoManager.registerController('[Shape] n2 (Valence 2)', bindHistory(fShape.add(uniforms.uN2, 'value', 0.1, 50.0).name('n2 (Valence 2)')));
         lfoManager.registerController('[Shape] n3 (Valence 3)', bindHistory(fShape.add(uniforms.uN3, 'value', 0.1, 50.0).name('n3 (Valence 3)')));
@@ -2086,7 +1893,7 @@
         const fMotion = guiMain.addFolder('Geometry & Array');
         lfoManager.registerController('[Motion] Rot Speed', bindHistory(fMotion.add(uniforms.uRotationSpeed, 'value', -2.0, 2.0).name('Rotation Speed')));
         lfoManager.registerController('[Motion] Twist', bindHistory(fMotion.add(uniforms.uTwist, 'value', -5.0, 5.0).name('Twist (Spirals)')));
-        lfoManager.registerController('[Geo] Waves', bindHistory(fMotion.add(uniforms.uWaves, 'value', 0.0, 0.5).name('Waves (Displace)')));
+        lfoManager.registerController('[Geo] Waves', bindHistory(fMotion.add(uniforms.uWaves, 'value', 0.0, 0.5).name('Waves (Displace)').decimals(1)));
         lfoManager.registerController('[Geo] Distortion', bindHistory(fMotion.add(uniforms.uDistortion, 'value', 0.0, 1.0).name('Distortion')));
         lfoManager.registerController('[Geo] Dist Scale', bindHistory(fMotion.add(uniforms.uDistortionScale, 'value', 0.0, 1.0).name('Distortion Scale')));
         lfoManager.registerController('[Geo] Fold', bindHistory(fMotion.add(uniforms.uFold, 'value', 1.0, 10.0, 1.0).name('Fold (Kaleidoscope)')));
@@ -2102,13 +1909,6 @@
         lfoManager.registerController('[FX] Contrast', bindHistory(fFX.add(uniforms.uContrast, 'value', 0.5, 2.0).name('Contrast')));
         lfoManager.registerController('[FX] Bloom', bindHistory(fFX.add(uniforms.uBloom, 'value', 0.0, 1.0).name('Bloom (Glow)')));
         lfoManager.registerController('[FX] Noise', bindHistory(fFX.add(uniforms.uNoise, 'value', 0.0, 0.5).name('Noise (Grain)')));
-
-        // 5. TEXT
-        const fText = guiMain.addFolder('Text Overlay');
-        const textControllers = textOverlay.setupGUI(fText);
-
-        // Register Text Targets for LFO (NOW with Controllers)
-        lfoManager.registerTextTargets(textOverlay, textControllers);
 
         // --- LFO MANAGER (MOVED BELOW GEOMETRY) ---
         // Just logically, but in lil-gui folders appear in creation order. 
@@ -2127,7 +1927,7 @@
         lfoManager.registerColorHueTargets(uniforms);
 
         // 6. PRESETS (Append at bottom of Main)
-        const presetManager = new PresetManager(guiMain, uniforms, textOverlay, null, lfoManager);
+        const presetManager = new PresetManager(guiMain, uniforms, null, lfoManager);
 
         // --- ACCORDION LOGIC ---
         // Auto-close other folders when one is opened
@@ -2164,7 +1964,6 @@
             lfoManager.update(time);
 
             // Render
-            textOverlay.update(); // Pulse or animate if needed
             renderer.render(scene, camera);
         }
         animate();
@@ -2195,10 +1994,6 @@
 
             renderer.setSize(w, h);
             uniforms.uResolution.value.set(w, h);
-
-            if (textOverlay) {
-                textOverlay.resize(w, h);
-            }
         });
 
         // Initialize State from URL (if present)
