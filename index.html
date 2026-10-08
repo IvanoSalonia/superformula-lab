@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Superformula Lab</title>
+    <meta name="description" content="A real-time browser tool by Ivano Salonia for drawing Gielis superformula shapes: lobes and valence, bloom, LFO automation, audio reactivity and export.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -186,6 +187,23 @@
 
         .gui-export .lil-gui.root>.title {
             text-align: right;
+        }
+
+        /* The page's own name and what it is, for a screen reader and for a
+           crawler. Out of the way of the canvas rather than hidden from
+           anyone: every control this names is on screen, drawn by script into
+           the panels, where neither a reader nor a crawler can reach it. The
+           words here say what those panels say. */
+        .sf-sr {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
+            border: 0;
+            overflow: hidden;
+            clip-path: inset(50%);
+            white-space: nowrap;
         }
 
         /* branding block (main panel title) */
@@ -646,6 +664,16 @@
 </head>
 
 <body>
+
+    <!-- The whole interface is drawn by script into a WebGL page, so this is
+         the only text that exists before any of it runs. It is the page's
+         name and a plain account of the controls, in the order the panels
+         list them. -->
+    <h1 class="sf-sr">Superformula Lab</h1>
+    <p class="sf-sr">A real-time browser tool by Ivano Salonia for drawing Gielis superformula
+        shapes. Gielis parameters for lobes and valence, appearance, geometry and array,
+        post processing with bloom, LFO automation, audio reactivity, a presets manager,
+        and frame-sequence export.</p>
     <div id="canvas-container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
